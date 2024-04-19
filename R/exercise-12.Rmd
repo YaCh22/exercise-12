@@ -1,0 +1,216 @@
+---
+title: "Exercise_11"
+output: html_document
+date: "2024-04-01"
+---
+Before we get started, we will load all the packages needed and load the data set.
+```{r}
+new_pkg <- c("tidyverse", "dplyr", "mosaic", "ggplot2", "infer", "skimr", "cowplot", "broom", "naniar", "AICcmodavg", "MuMIn")
+not_installed <- new_pkg[!new_pkg %in% rownames(installed.packages())]
+if (length(not_installed) > 0) install.packages(not_installed) 
+
+library("tidyverse")
+library("dplyr")
+library("mosaic")
+library("ggplot2")
+library("infer")
+library("skimr")
+library("cowplot")
+library("broom")
+library("naniar")
+library("AICcmodavg")
+library("MuMIn")
+```
+
+```{r}
+f <- "https://raw.githubusercontent.com/difiore/ada-2024-datasets/main/Mammal_lifehistories_v2.txt"
+d <- read_tsv(f)
+
+
+skim(d)
+```
+The output indicates 4 variables are categorical and 10 are numeric. They were listed in the following output. 
+Column type frequency:           
+  character                4     
+  numeric                  10  
+
+Challenge 1
+Step 1
+```{r}
+d <- replace_with_na_all(data = d,
+                    condition = ~.x == -999)
+```
+
+Step 2
+```{r}
+d_2 <- d %>%
+  select(-c("litter size", "refs"))
+```
+
+Step 3
+```{r}
+d_3 <- d_2 %>%
+  select_if(is.numeric)
+```
+
+Spaces and parentheses sometimes interfere with the codes so I rename the variables.
+```{r}
+names(d_3) <- c("mass", "gestation", "newborn", "weaning", "wean.mass", "AFR", "max.life", "litters.year")
+```
+
+
+```{r}
+d_3[paste0("log.", names(d_3))] <- lapply(d_3, function(x) log(x))
+```
+
+This is the data frame with all log transformed variables
+```{r}
+d_log <- bind_cols(d_2, d_3)
+```
+
+Step 4
+```{r}
+relGest <- lm(log.gestation~log.mass, d_log, na.action=na.exclude)
+relWean <- lm(log.weaning~log.mass, d_log, na.action=na.exclude)
+relAFR <- lm(log.AFR~log.mass, d_log, na.action=na.exclude)
+relLife <- lm(log.max.life~log.mass, d_log, na.action=na.exclude)
+relNewbornMass <- lm(log.newborn~log.mass, d_log, na.action=na.exclude)
+relWeaningMass <- lm(log.wean.mass~log.mass, d_log, na.action=na.exclude)
+d_log <- d_log %>%
+    mutate(relGest = residuals(relGest), 
+           relWean = residuals(relWean), 
+           relAFR = residuals(relAFR), 
+           relLife = residuals(relLife), 
+           relNewbornMass = residuals(relNewbornMass), 
+           relWeaningMass = residuals(relWeaningMass))
+
+```
+
+Step 5
+```{r}
+p1 <- ggplot(d_log, aes(order,relLife)) +
+    geom_boxplot()+
+    theme(axis.text.x = element_text(size = 5,angle = 270))
+p2 <- ggplot(d_log, aes(order,relNewbornMass)) +
+    geom_boxplot()+
+    theme(axis.text.x = element_text(size = 5,angle = 270))
+p3 <- ggplot(d_log, aes(order,relWeaningMass)) +
+    geom_boxplot()+
+    theme(axis.text.x = element_text(size = 5,angle = 270))
+
+plot_grid(p1,p2,p3)
+```
+The mammalian order with the highest residuals in terms of means:
+relLife: Primates;
+relNewbornMass: Cetacea;
+relWeaningMass: Perissodactyla
+
+Step 6
+Here we remove NAs for models for each of the two response variables, max. life(mo) and AFR(mo)
+```{r}
+d_max.life <- d_log %>%
+  drop_na(log.max.life, log.gestation, log.newborn, log.weaning, log.wean.mass, log.litters.year, log.mass)
+```
+
+```{r}
+d_AFR <- d_log %>%
+  drop_na(log.AFR, log.gestation, log.newborn, log.weaning, log.wean.mass, log.litters.year, log.mass)
+```
+
+For log.max.life:
+```{r}
+m0 <- lm(data = d_max.life, log.max.life ~ log.gestation + log.newborn + log.weaning + log.wean.mass + log.litters.year + log.mass)
+summary(m0)
+```
+```{r}
+drop1(m0, test = "F")
+```
+```{r}
+m1 <- update(m0, . ~ . - log.wean.mass)
+summary(m1)
+```
+
+
+```{r}
+drop1(m1, test = "F")
+```
+
+```{r}
+m2 <- update(m1, . ~ . - log.newborn)
+summary(m2)
+```
+```{r}
+drop1(m2, test = "F")
+```
+
+```{r}
+aictab(list(m0, m1, m2), c("m0", "m1", "m2"))
+```
+Overall, m2 (dropped log.wean.mass and log.newborn) is the best model, all three models have a Delta_AICc lower than 4. log.gestation, log.weaning, log.litters.year and log.mass appear in all of this set of “top” models.
+
+```{r}
+m <- lm(data = d_max.life, log.max.life ~ log.gestation + log.newborn + log.weaning + log.wean.mass + log.litters.year + log.mass, na.action = "na.fail")
+mods <- dredge(m)
+```
+```{r}
+(mods.avg <- summary(model.avg(mods, subset = delta <= 4, fit = TRUE)))
+
+```
+
+```{r}
+confint(mods.avg)
+```
+
+```{r}
+plot(mods.avg, full = TRUE)
+```
+For AFR:
+```{r}
+m0_AFR <- lm(data = d_AFR, log.AFR ~ log.gestation + log.newborn + log.weaning + log.wean.mass + log.litters.year + log.mass)
+summary(m0_AFR)
+```
+
+```{r}
+drop1(m0_AFR, test = "F")
+```
+
+```{r}
+m1_AFR <- update(m0_AFR, . ~ . - log.wean.mass)
+summary(m1_AFR)
+
+```
+
+```{r}
+drop1(m1_AFR, test = "F")
+```
+
+```{r}
+m2_AFR <- update(m1_AFR, . ~ . - log.newborn)
+summary(m2_AFR)
+```
+
+```{r}
+drop1(m2_AFR, test = "F")
+```
+
+```{r}
+aictab(list(m0_AFR, m1_AFR, m2_AFR), c("m0_AFR", "m1_AFR", "m2_AFR"))
+```
+With same variables dropped, m2_AFR is the best model for AFR, all three models have a Delta_AICc lower than 4. log.gestation, log.weaning, log.litters.year and log.mass (the same four variables) appear in all of this set of “top” models.
+```{r}
+m_AFR <- lm(data = d_AFR, log.AFR ~ log.gestation + log.newborn + log.weaning + log.wean.mass + log.litters.year + log.mass, na.action = "na.fail")
+mods_AFR <- dredge(m_AFR)
+```
+
+```{r}
+(mods.avg_AFR <- summary(model.avg(mods_AFR, subset = delta <= 4, fit = TRUE)))
+
+```
+
+```{r}
+confint(mods.avg_AFR)
+```
+
+```{r}
+plot(mods.avg_AFR, full = TRUE)
+```
